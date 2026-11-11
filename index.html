@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#E9EFF3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111A23" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="Whistle a tune, see it as notes, fix it, export MIDI." />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <title>Siffle</title>
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <span class="mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="22" height="22"><path d="M3 22c4-9 8-9 11-3s7 6 10-4" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/><circle cx="27" cy="9" r="3" fill="currentColor"/></svg>
+        </span>
+        <input id="title" class="title" value="Untitled" aria-label="Song title" spellcheck="false" />
+        <button id="new" class="ghost" type="button">New</button>
+      </header>
+
+      <div class="strip" role="toolbar" aria-label="Recording settings">
+        <div class="seg" role="radiogroup" aria-label="Input">
+          <button type="button" role="radio" data-mode="whistle" aria-checked="true">Whistle</button>
+          <button type="button" role="radio" data-mode="voice" aria-checked="false">Hum</button>
+        </div>
+        <div class="tempo" aria-label="Tempo">
+          <button id="slower" type="button" class="ghost small" aria-label="Slower">−</button>
+          <span><b id="bpm">100</b> bpm</span>
+          <button id="faster" type="button" class="ghost small" aria-label="Faster">+</button>
+        </div>
+        <label class="pick">
+          <select id="bars" aria-label="Length in bars">
+            <option value="2">2 bars</option>
+            <option value="4" selected>4 bars</option>
+            <option value="8">8 bars</option>
+          </select>
+        </label>
+        <label class="pick">
+          <select id="grid" aria-label="Rhythm grid">
+            <option value="auto">Grid: auto</option>
+            <option value="e">Grid: 1/8</option>
+            <option value="s">Grid: 1/16</option>
+            <option value="et">Grid: 1/8 triplet</option>
+          </select>
+        </label>
+        <label class="check"><input id="metro" type="checkbox" /> Click on playback</label>
+      </div>
+
+      <main class="roll">
+        <canvas id="roll" aria-label="Piano roll. Tap empty space to add a note, tap a note to select it, drag to move."></canvas>
+        <div class="zoom">
+          <button id="zoomOut" type="button" aria-label="Zoom out">−</button>
+          <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
+        </div>
+      </main>
+
+      <p id="status" class="status" aria-live="polite">Tap the red button, wait for four clicks, then whistle.</p>
+
+      <nav class="transport" aria-label="Transport">
+        <button id="undo" type="button" class="tool" disabled>
+          <svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3"/></svg>
+          <span>Undo</span>
+        </button>
+        <button id="octDown" type="button" class="tool">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+          <span>Octave</span>
+        </button>
+        <button id="record" type="button" class="record" aria-label="Record">
+          <span class="dot"></span>
+        </button>
+        <button id="octUp" type="button" class="tool">
+          <svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+          <span>Octave</span>
+        </button>
+        <button id="play" type="button" class="tool">
+          <svg viewBox="0 0 24 24" class="i-play"><path d="M7 5v14l12-7z" class="fill"/></svg>
+          <svg viewBox="0 0 24 24" class="i-stop"><rect x="6" y="6" width="12" height="12" rx="2" class="fill"/></svg>
+          <span>Play</span>
+        </button>
+      </nav>
+
+      <div class="secondary">
+        <button id="delete" type="button" class="ghost" disabled>Delete note</button>
+        <button id="export" type="button" class="ghost">Export MIDI</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
