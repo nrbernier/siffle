@@ -8,8 +8,19 @@
     <meta name="description" content="Whistle a tune, see it as notes, fix it, export MIDI." />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <title>Siffle</title>
+    <style>
+      /* Until the app script runs, show only the loading note. If the script never
+         loads (e.g. GitHub Pages serving the source instead of the build), the note stays. */
+      html:not(.ready) .app { display: none; }
+      html.ready .boot { display: none; }
+      .boot { font: 16px/1.5 system-ui, sans-serif; max-width: 32em; margin: 20vh auto; padding: 0 20px; color: #1c2a38; }
+    </style>
   </head>
   <body>
+    <div class="boot">
+      <p><strong>Siffle is loading…</strong></p>
+      <p>If this stays, the app script did not load. On GitHub Pages, set Settings → Pages → Source to “GitHub Actions”.</p>
+    </div>
     <div class="app">
       <header class="top">
         <span class="mark" aria-hidden="true">

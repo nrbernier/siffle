@@ -9,6 +9,9 @@ import { isVoiced, transcribe } from './core/transcribe';
 import { clamp, hzToMidi, median, newId, noteName } from './core/util';
 import { PianoRoll } from './ui/pianoroll';
 
+// Reveal the app before the canvas measures itself (see the boot note in index.html).
+document.documentElement.classList.add('ready');
+
 const STORE_KEY = 'siffle:song';
 const PREFS_KEY = 'siffle:prefs';
 
