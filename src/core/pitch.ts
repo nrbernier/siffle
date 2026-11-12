@@ -148,17 +148,36 @@ export class StreamingAnalyzer {
   }
 }
 
-/** Offline helper (tests, debugging): analyse a whole signal. */
+/**
+ * Offline helper (tests, eval): analyse a whole signal exactly as the live
+ * path does. `startSample` is the context sample index of samples[0], so
+ * frame times land on the same clock as a live recording.
+ */
 export function analyzeSignal(
   samples: Float32Array,
   sampleRate: number,
   mode: InputMode,
+  startSample = 0,
   chunk = 1024,
 ): Frame[] {
   const frames: Frame[] = [];
   const a = new StreamingAnalyzer(sampleRate, mode, (f) => frames.push(f));
   for (let i = 0; i < samples.length; i += chunk) {
-    a.push(samples.subarray(i, Math.min(samples.length, i + chunk)), i);
+    a.push(samples.subarray(i, Math.min(samples.length, i + chunk)), startSample + i);
   }
   return frames;
+}
+
+/**
+ * Noise floor from the count-in: median level between the first click and
+ * just before bar one. Clamped so a silent room does not make every breath
+ * count as voiced.
+ */
+export function noiseFloorDb(frames: Frame[], t0: number, tBarOne: number): number {
+  const levels = frames.filter((f) => f.t >= t0 && f.t < tBarOne - 0.05).map((f) => f.rmsDb);
+  if (!levels.length) return -80;
+  const s = [...levels].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  const med = s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  return Math.min(med, -40);
 }

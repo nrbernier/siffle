@@ -23,9 +23,14 @@ npm install
 npm run dev     # local server, also reachable from a phone on the same network
 npm test        # transcription, quantization and MIDI tests on synthetic audio
 npm run build
+npm run eval    # score real recorded takes (needs the private fixtures repo next to this one)
 ```
 
 Microphone access needs HTTPS or `localhost`. To try it on a phone during development, use the deployed GitHub Pages build or a tunnel.
+
+## Test takes
+
+Open the app with `?debug=1` to keep the audio of a take in memory and save it, with its corrected notes as the answer key, as a WAV and a JSON file. These live in a private repo, never in this one; `npm run eval` scores the algorithm against them.
 
 ## Status
 

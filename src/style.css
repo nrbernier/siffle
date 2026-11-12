@@ -335,6 +335,85 @@ button:disabled {
   padding: 6px 16px 12px;
 }
 
+/* debug capture (only with ?debug=1) */
+.debugbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 8px 0;
+  padding: 6px 6px 6px 12px;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.debugbar button {
+  white-space: nowrap;
+}
+
+.debugbar[hidden] {
+  display: none;
+}
+
+.sheet {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 20px;
+  width: min(92vw, 380px);
+}
+
+.sheet::backdrop {
+  background: rgb(0 0 0 / 0.35);
+}
+
+.sheet h2 {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+
+.sheet p {
+  margin: 0 0 14px;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.field input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 8px 10px;
+  font-size: 1rem;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.primary {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 16px;
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .record .dot {
     transition: none;

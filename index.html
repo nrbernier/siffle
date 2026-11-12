@@ -66,6 +66,11 @@
         </div>
       </main>
 
+      <div id="debugBar" class="debugbar" hidden>
+        <span>Debug: audio of this take is kept until the next recording.</span>
+        <button id="saveTake" type="button" class="ghost" disabled>Save test take</button>
+      </div>
+
       <p id="status" class="status" aria-live="polite">Tap the red button, wait for four clicks, then whistle.</p>
 
       <nav class="transport" aria-label="Transport">
@@ -96,6 +101,21 @@
         <button id="export" type="button" class="ghost">Export MIDI</button>
       </div>
     </div>
+    <dialog id="takeDialog" class="sheet">
+      <form method="dialog">
+        <h2>Save test take</h2>
+        <p>Fix the notes first: what you save now becomes the answer key.</p>
+        <label class="field">
+          <span>Name</span>
+          <input id="takeName" required autocomplete="off" spellcheck="false" placeholder="scale-whistle-100-iphone-1" />
+        </label>
+        <label class="check"><input id="takePhones" type="checkbox" /> Recorded with headphones</label>
+        <div class="actions">
+          <button value="cancel" type="submit" class="ghost" formnovalidate>Cancel</button>
+          <button value="save" type="submit" class="primary">Save WAV + JSON</button>
+        </div>
+      </form>
+    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

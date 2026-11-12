@@ -88,15 +88,23 @@ export function quantizeTake(take: TakeNote[], grid: Grid, lengthTicks: number):
     i.end -= bias;
   }
 
-  // 2. snap onsets; a note just before the downbeat belongs to tick 0
+  // 2. snap onsets. A note just before the downbeat belongs to tick 0. A pickup
+  // up to one beat before bar one wraps to the end of the section: the section
+  // loops, so that is where an upbeat sits.
   type Slot = { n: TakeNote; slot: number; start: number; end: number };
   const slots: Slot[] = [];
   for (const i of items) {
     let slot = Math.round(i.start / g) * g + 0; // + 0 turns -0 into 0
     if (slot < 0 && i.start > -g / 2) slot = 0;
+    if (slot < 0 && slot >= -PPQ) {
+      slot += lengthTicks;
+      i.start += lengthTicks;
+      i.end += lengthTicks;
+    }
     if (slot < 0 || slot >= lengthTicks) continue;
     slots.push({ ...i, slot });
   }
+  slots.sort((a, b) => a.slot - b.slot || a.start - b.start);
 
   // 3. collisions: two notes on one slot
   const placed: Slot[] = [];
@@ -115,13 +123,14 @@ export function quantizeTake(take: TakeNote[], grid: Grid, lengthTicks: number):
     placed.push(s);
   }
 
-  // 4. durations: snap the end, at least one step, no tiny rests, no overlap
+  // 4. durations: snap the end, at least one step, no overlap. A raw gap to the
+  // next onset shorter than one step is not a rest: the note runs on to it.
   const notes: Note[] = placed.map((s, k) => {
     const next = placed[k + 1];
     const limit = next ? next.slot : lengthTicks;
     let end = Math.round(s.end / g) * g;
+    if (next && next.start - s.end < g) end = limit;
     if (end - s.slot < g) end = s.slot + g;
-    if (limit - end < g) end = limit;
     end = Math.min(end, limit);
     return {
       id: newId(),

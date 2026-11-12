@@ -3,20 +3,32 @@
 import { PPQ, type InputMode } from '../core/config';
 import type { Song } from '../core/model';
 import { sectionTicks } from '../core/model';
-import { StreamingAnalyzer, type Frame } from '../core/pitch';
-import { median, midiToHz } from '../core/util';
+import { noiseFloorDb, StreamingAnalyzer, type Frame } from '../core/pitch';
+import { midiToHz } from '../core/util';
 
 export interface RecordResult {
   frames: Frame[];
+  t0: number; // context time of the first count-in click
   tBarOne: number;
   noiseFloorDb: number;
   inputOffsetSec: number;
   bpm: number;
+  sampleRate: number;
+  outputLatency: number | null;
+  baseLatency: number | null;
+}
+
+/** Mic audio of the last take. Only kept when debug capture is on. */
+export interface TakeAudio {
+  sampleRate: number;
+  firstSample: number; // context sample index of samples[0]
+  samples: Float32Array;
 }
 
 export interface RecordSession {
   stop(): void;
   done: Promise<RecordResult>;
+  t0: number;
   tBarOne: number;
   tEnd: number;
 }
@@ -25,6 +37,29 @@ export class Engine {
   ctx: AudioContext | null = null;
   private master!: GainNode;
   private workletReady: Promise<void> | null = null;
+  /** When true, the next recording keeps its mic audio in memory (see plan section 12). */
+  debug = false;
+  private takeChunks: { start: number; data: Float32Array }[] = [];
+
+  /** Forget any kept audio. Called on a new recording, on New, and when the page is hidden. */
+  clearTakeAudio(): void {
+    this.takeChunks = [];
+  }
+
+  get hasTakeAudio(): boolean {
+    return this.takeChunks.length > 0;
+  }
+
+  /** The kept audio as one contiguous buffer; dropouts are filled with silence. */
+  takeAudio(): TakeAudio | null {
+    const chunks = this.takeChunks;
+    if (!chunks.length || !this.ctx) return null;
+    const first = chunks[0].start;
+    const last = chunks[chunks.length - 1];
+    const samples = new Float32Array(last.start + last.data.length - first);
+    for (const c of chunks) samples.set(c.data, c.start - first);
+    return { sampleRate: this.ctx.sampleRate, firstSample: first, samples };
+  }
 
   /** Must be called from a user gesture the first time (iOS). */
   async ensure(): Promise<AudioContext> {
@@ -161,6 +196,7 @@ export class Engine {
     playOthers?: boolean;
   }): Promise<RecordSession> {
     const ctx = await this.ensure();
+    this.clearTakeAudio();
     if (!this.workletReady) {
       this.workletReady = ctx.audioWorklet.addModule(import.meta.env.BASE_URL + 'capture-worklet.js');
     }
@@ -188,8 +224,10 @@ export class Engine {
       frames.push(f);
       opts.onFrame(f);
     });
+    const keep = this.debug;
     node.port.onmessage = (e: MessageEvent<{ start: number; data: Float32Array }>) => {
       analyzer.push(e.data.data, e.data.start);
+      if (keep) this.takeChunks.push({ start: e.data.start, data: e.data.data });
     };
 
     const song = opts.song;
@@ -220,15 +258,24 @@ export class Engine {
       sink.disconnect();
       stream.getTracks().forEach((t) => t.stop());
       if (session) session.type = 'playback';
-      const countIn = frames.filter((f) => f.t >= t0 && f.t < tBarOne - 0.05).map((f) => f.rmsDb);
-      const floor = countIn.length ? median(countIn) : -80;
-      resolve({ frames, tBarOne, noiseFloorDb: Math.min(floor, -40), inputOffsetSec, bpm: song.tempoBpm });
+      const c = ctx as AudioContext & { outputLatency?: number };
+      resolve({
+        frames,
+        t0,
+        tBarOne,
+        noiseFloorDb: noiseFloorDb(frames, t0, tBarOne),
+        inputOffsetSec,
+        bpm: song.tempoBpm,
+        sampleRate: ctx.sampleRate,
+        outputLatency: c.outputLatency ?? null,
+        baseLatency: c.baseLatency ?? null,
+      });
     };
     // a short tail lets the last note's release be analysed
     const watch = window.setInterval(() => {
       if (ctx.currentTime >= tEnd + inputOffsetSec + 0.2) finish();
     }, 50);
 
-    return { stop: finish, done, tBarOne, tEnd };
+    return { stop: finish, done, t0, tBarOne, tEnd };
   }
 }

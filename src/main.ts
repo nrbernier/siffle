@@ -2,6 +2,7 @@ import './style.css';
 import { Engine, type RecordSession } from './audio/engine';
 import { MODES, PPQ, type InputMode } from './core/config';
 import { songToMidi } from './core/midi';
+import { encodeWav, noteRefs, slug, type TakeFile, type TakeNoteRef } from './core/takefile';
 import { createSong, isSong, sectionTicks, type Grid, type Note, type Song, type Track } from './core/model';
 import { GRID_LABELS, GRID_TICKS, quantizeTake, type ConcreteGrid } from './core/quantize';
 import { rawToTake } from './core/take';
@@ -29,6 +30,15 @@ const engine = new Engine();
 let playback: ReturnType<Engine['play']> | null = null;
 let session: RecordSession | null = null;
 let playRaf = 0;
+let starting = false; // a recording is being set up (mic permission, worklet)
+let startedAt = 0; // performance.now() when the current recording began
+
+// Debug capture (plan section 12): ?debug=1 keeps the mic audio of the last take
+// in memory so it can be saved as a test fixture. Off by default, never persisted.
+const debug = new URLSearchParams(location.search).get('debug') === '1';
+engine.debug = debug;
+type LastTake = Omit<TakeFile, 'name' | 'savedAt' | 'headphones' | 'expected' | 'firstSample'>;
+let lastTake: LastTake | null = null;
 
 const section = () => song.sections[0];
 const melody = (): Track => section().tracks[0];
@@ -299,6 +309,7 @@ function deleteSelected(): void {
 $('new').addEventListener('click', () => {
   if (melody().notes.length && !confirm('Start a new song? The current one is replaced (Undo brings it back).')) return;
   stopAll();
+  forgetTake();
   commit(() => {
     const fresh = createSong();
     fresh.tempoBpm = song.tempoBpm;
@@ -363,15 +374,23 @@ function stopAll(): void {
 // --- recording -----------------------------------------------------------
 
 $('record').addEventListener('click', async () => {
+  if (starting) return; // ignore taps while the mic is opening
   if (session) {
-    session.stop();
+    // a quick double tap should not stop the take it just started
+    if (performance.now() - startedAt > 600) session.stop();
     return;
   }
   if (playback) stopPlayback();
-  await record();
+  starting = true;
+  try {
+    await record();
+  } finally {
+    starting = false;
+  }
 });
 
 async function record(): Promise<void> {
+  forgetTake();
   roll.select(null);
   roll.trace = [];
   const beat = 60 / song.tempoBpm;
@@ -425,6 +444,8 @@ async function record(): Promise<void> {
     return;
   }
 
+  starting = false; // the session exists now: a later tap stops it
+  startedAt = performance.now();
   app.classList.add('recording');
   roll.recording = true;
   roll.scrollX = 0;
@@ -439,7 +460,29 @@ async function record(): Promise<void> {
 
   const { notes, tuningOffset } = transcribe(result.frames, mode, result.noiseFloorDb);
   const take = rawToTake(notes, result);
+  const recordedGrid = melody().grid;
+  const rememberTake = (detected: TakeNoteRef[]) => {
+    if (!debug || !engine.hasTakeAudio) return;
+    lastTake = {
+      schemaVersion: 1,
+      userAgent: navigator.userAgent,
+      mode,
+      bpm: result.bpm,
+      timeSig: [...song.timeSig] as [number, number],
+      bars: section().bars,
+      grid: recordedGrid,
+      sampleRate: result.sampleRate,
+      t0: result.t0,
+      tBarOne: result.tBarOne,
+      inputOffsetSec: result.inputOffsetSec,
+      outputLatency: result.outputLatency,
+      baseLatency: result.baseLatency,
+      detected,
+    };
+    syncDebug();
+  };
   if (!take.length) {
+    rememberTake([]);
     roll.draw();
     say(mode === 'whistle' ? 'No notes heard. Whistle a little louder or closer to the phone.' : 'No notes heard. Hum a little louder or closer to the phone.');
     return;
@@ -449,6 +492,7 @@ async function record(): Promise<void> {
     lastGrid = q.grid;
     melody().notes = q.notes;
   });
+  rememberTake(noteRefs(melody().notes));
   const n = melody().notes.length;
   roll.centerOn(melody().notes.map((x) => x.pitch));
   const cents = Math.round(tuningOffset * 100);
@@ -486,6 +530,85 @@ $('export').addEventListener('click', async () => {
   say(`Saved ${name}.`);
 });
 
+// --- debug capture -------------------------------------------------------
+
+let sharing = false; // the share sheet can hide the page; keep the audio meanwhile
+const debugBar = $<HTMLDivElement>('debugBar');
+const saveTakeBtn = $<HTMLButtonElement>('saveTake');
+const takeDialog = $<HTMLDialogElement>('takeDialog');
+const takeName = $<HTMLInputElement>('takeName');
+const takePhones = $<HTMLInputElement>('takePhones');
+debugBar.hidden = !debug;
+// Read-only probe for automated checks: how many mic samples are held in memory.
+(window as Window & { siffleKeptSamples?: () => number }).siffleKeptSamples = () => engine.takeAudio()?.samples.length ?? 0;
+
+function forgetTake(): void {
+  engine.clearTakeAudio();
+  lastTake = null;
+  syncDebug();
+}
+
+function syncDebug(): void {
+  saveTakeBtn.disabled = !(lastTake && engine.hasTakeAudio);
+}
+
+saveTakeBtn.addEventListener('click', () => {
+  if (!lastTake) return;
+  if (!takeName.value) takeName.value = `${slug(song.title === 'Untitled' ? 'take' : song.title)}-${lastTake.mode}-${lastTake.bpm}`;
+  takeDialog.showModal();
+  takeName.select();
+});
+
+// Handled on submit (still inside the tap) so iOS allows the share sheet.
+takeDialog.querySelector('form')!.addEventListener('submit', async (e) => {
+  const submitter = (e as SubmitEvent).submitter as HTMLButtonElement | null;
+  if (submitter?.value !== 'save' || !lastTake) return;
+  const audio = engine.takeAudio();
+  if (!audio) {
+    say('The take audio is gone (the page was hidden or a new recording started). Record again.');
+    return;
+  }
+  const name = slug(takeName.value);
+  const file: TakeFile = {
+    ...lastTake,
+    name,
+    savedAt: new Date().toISOString(),
+    headphones: takePhones.checked,
+    firstSample: audio.firstSample,
+    expected: noteRefs(melody().notes),
+  };
+  const wav = new File([encodeWav(audio.samples, audio.sampleRate)], `${name}.wav`, { type: 'audio/wav' });
+  const json = new File([JSON.stringify(file, null, 2)], `${name}.json`, { type: 'application/json' });
+  await deliver([wav, json]);
+  say(`Saved ${name}.wav and ${name}.json. Put both in takes/${name}/ in the fixtures repo (as take.wav and take.json).`);
+});
+
+/** Share sheet on phones, downloads elsewhere. */
+async function deliver(files: File[]): Promise<void> {
+  const touch = matchMedia('(pointer: coarse)').matches;
+  if (touch && navigator.canShare?.({ files })) {
+    sharing = true;
+    try {
+      await navigator.share({ files });
+      return;
+    } catch (e) {
+      if ((e as DOMException).name === 'AbortError') return;
+    } finally {
+      sharing = false;
+    }
+  }
+  files.forEach((f, i) =>
+    window.setTimeout(() => {
+      const url = URL.createObjectURL(f);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = f.name;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }, i * 300),
+  );
+}
+
 // --- keyboard (desktop) --------------------------------------------------
 
 window.addEventListener('keydown', (e) => {
@@ -515,6 +638,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('visibilitychange', () => {
+  if (document.hidden && !sharing) forgetTake();
   if (document.hidden) stopAll();
 });
 

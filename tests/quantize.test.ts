@@ -48,6 +48,28 @@ describe('quantizeTake', () => {
     ]);
   });
 
+  it('a pickup up to one beat before bar one wraps to the end of the section', () => {
+    const r = quantizeTake(take([-0.5, 0, 1, 2], 0.4), 'e', 1920);
+    expect(r.notes.map((n) => n.startTick)).toEqual([0, 480, 960, 1680]);
+    expect(r.notes[3].durTick).toBe(240);
+  });
+
+  it('a note more than one beat before bar one is still dropped', () => {
+    const r = quantizeTake(take([-1.5, 0, 1], 0.4), 'e', 1920);
+    expect(r.notes.map((n) => n.startTick)).toEqual([0, 480]);
+  });
+
+  it('staccato notes run on to the next onset when the gap is under one step', () => {
+    // 0.6-beat notes a beat apart: the 0.4-beat gap is shorter than one eighth (0.5)
+    const r = quantizeTake(take([0, 1, 2], 0.6), 'e', 1920);
+    expect(r.notes.map((n) => n.durTick)).toEqual([480, 480, 240]);
+  });
+
+  it('a gap of a full step or more stays a rest', () => {
+    const r = quantizeTake(take([0, 1], 0.45), 'e', 1920);
+    expect(r.notes[0].durTick).toBe(240);
+  });
+
   it('requantizing from raw is stable', () => {
     const t = take([0.07, 0.55, 1.1, 1.48], 0.4);
     const a = quantizeTake(t, 's', 1920).notes.map((n) => n.startTick);
