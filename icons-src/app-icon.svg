@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Full-bleed: iOS and Android round or mask the corners themselves.
+       Content stays inside the central 80% circle (maskable safe zone). -->
+  <rect width="512" height="512" fill="#1C2A38"/>
+  <!-- faint piano-roll rows -->
+  <g fill="#E9EFF3" opacity="0.06">
+    <rect y="136" width="512" height="40"/>
+    <rect y="216" width="512" height="40"/>
+    <rect y="336" width="512" height="40"/>
+  </g>
+  <g transform="translate(256 280) scale(0.9) translate(-264 -235)">
+    <path d="M80 336c56-128 112-128 152-48s96 80 136-48" fill="none" stroke="#E9EFF3" stroke-width="46" stroke-linecap="round"/>
+    <circle cx="408" cy="160" r="40" fill="#D9406F"/>
+  </g>
+</svg>
