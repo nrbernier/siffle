@@ -10,6 +10,7 @@ export interface RecordResult {
   frames: Frame[];
   t0: number; // context time of the first count-in click
   tBarOne: number;
+  stoppedAt: number; // context time when the recording ended
   noiseFloorDb: number;
   inputOffsetSec: number;
   bpm: number;
@@ -30,7 +31,7 @@ export interface RecordSession {
   done: Promise<RecordResult>;
   t0: number;
   tBarOne: number;
-  tEnd: number;
+  tEnd: number; // in free-length mode this is the safety cap
 }
 
 export class Engine {
@@ -193,7 +194,9 @@ export class Engine {
     song: Song;
     mode: InputMode;
     onFrame: (f: Frame) => void;
-    playOthers?: boolean;
+    /** Record until stopped instead of for the section length (capped at maxBars). */
+    free?: boolean;
+    maxBars?: number;
   }): Promise<RecordSession> {
     const ctx = await this.ensure();
     this.clearTakeAudio();
@@ -202,12 +205,23 @@ export class Engine {
     }
     await this.workletReady;
 
-    // Voice processing treats whistles as noise: switch all of it off.
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
-    });
+    // iOS: the audio session must allow capture *before* the mic is opened,
+    // otherwise getUserMedia fails ("AudioSession category is not compatible
+    // with audio capture"). Afterwards it goes back to 'auto', never 'playback',
+    // so the next recording can open the mic again.
     const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
     if (session) session.type = 'play-and-record';
+
+    // Voice processing treats whistles as noise: switch all of it off.
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+      });
+    } catch (err) {
+      if (session) session.type = 'auto';
+      throw err;
+    }
 
     const src = ctx.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(ctx, 'siffle-capture', {
@@ -236,12 +250,21 @@ export class Engine {
     const beatsPerBar = song.timeSig[0];
     const t0 = ctx.currentTime + 0.25;
     const tBarOne = t0 + beatsPerBar * beat;
-    const tEnd = tBarOne + (sectionTicks(song, section) / PPQ) * beat;
+    const bars = opts.free ? (opts.maxBars ?? 64) : sectionTicks(song, section) / PPQ / beatsPerBar;
+    const tEnd = tBarOne + bars * beatsPerBar * beat;
     const inputOffsetSec = this.estimateInputOffset();
 
+    // Clicks are scheduled just ahead of time, so an open-ended take does not
+    // queue hundreds of them and stopping silences them at once.
     const bus = ctx.createGain();
     bus.connect(this.master);
-    for (let t = t0, i = 0; t < tEnd - 1e-6; t += beat, i++) this.click(t, i % beatsPerBar === 0, bus);
+    let nextClick = 0;
+    const scheduleClicks = () => {
+      for (let t = t0 + nextClick * beat; t < Math.min(tEnd - 1e-6, ctx.currentTime + 0.3); t = t0 + ++nextClick * beat) {
+        this.click(t, nextClick % beatsPerBar === 0, bus);
+      }
+    };
+    scheduleClicks();
 
     let resolve!: (r: RecordResult) => void;
     const done = new Promise<RecordResult>((r) => (resolve = r));
@@ -257,10 +280,11 @@ export class Engine {
       node.disconnect();
       sink.disconnect();
       stream.getTracks().forEach((t) => t.stop());
-      if (session) session.type = 'playback';
+      if (session) session.type = 'auto';
       const c = ctx as AudioContext & { outputLatency?: number };
       resolve({
         frames,
+        stoppedAt: ctx.currentTime,
         t0,
         tBarOne,
         noiseFloorDb: noiseFloorDb(frames, t0, tBarOne),
@@ -273,6 +297,7 @@ export class Engine {
     };
     // a short tail lets the last note's release be analysed
     const watch = window.setInterval(() => {
+      scheduleClicks();
       if (ctx.currentTime >= tEnd + inputOffsetSec + 0.2) finish();
     }, 50);
 

@@ -48,6 +48,8 @@ body {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+  /* no double-tap zoom; taps also fire without delay */
+  touch-action: manipulation;
 }
 
 body {
@@ -188,8 +190,8 @@ button:disabled {
   border: 1px solid var(--line);
   background: var(--surface);
   border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 0.9rem;
+  padding: 5px 14px;
+  font-size: 16px; /* under 16px, iOS zooms the page when the menu opens */
 }
 
 .check {
@@ -394,7 +396,7 @@ button:disabled {
   border-radius: 8px;
   background: var(--bg);
   padding: 8px 10px;
-  font-size: 1rem;
+  font-size: 16px; /* iOS zooms into smaller fields */
 }
 
 .actions {

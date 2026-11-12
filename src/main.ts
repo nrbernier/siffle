@@ -43,6 +43,12 @@ let lastTake: LastTake | null = null;
 const section = () => song.sections[0];
 const melody = (): Track => section().tracks[0];
 const lengthTicks = () => sectionTicks(song, section());
+const barTicks = () => song.timeSig[0] * PPQ * (4 / song.timeSig[1]);
+const MAX_FREE_BARS = 64;
+// "Until I stop": record open-ended, then size the section to the take.
+let freeLength = !!loadPrefs().freeLength;
+// While an open-ended take runs, the roll grows with the playhead.
+let recordingTicks: number | null = null;
 
 function load(): Song | null {
   try {
@@ -54,7 +60,7 @@ function load(): Song | null {
   }
 }
 
-function loadPrefs(): { mode?: string; metro?: boolean } {
+function loadPrefs(): { mode?: string; metro?: boolean; freeLength?: boolean } {
   try {
     return JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}');
   } catch {
@@ -65,7 +71,7 @@ function loadPrefs(): { mode?: string; metro?: boolean } {
 function save(): void {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(song));
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ mode, metro: metro.checked }));
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ mode, metro: metro.checked, freeLength }));
   } catch {
     /* storage full or blocked: keep working in memory */
   }
@@ -104,7 +110,7 @@ function say(text: string, live = false): void {
 
 const roll = new PianoRoll($<HTMLCanvasElement>('roll'), {
   getNotes: () => melody().notes,
-  getLengthTicks: lengthTicks,
+  getLengthTicks: () => recordingTicks ?? lengthTicks(),
   getBeatsPerBar: () => song.timeSig[0],
   onAdd: (tick, pitch) => {
     commit(() => {
@@ -184,7 +190,13 @@ metro.checked = !!loadPrefs().metro;
 function syncControls(): void {
   titleEl.value = song.title;
   $('bpm').textContent = String(song.tempoBpm);
-  barsEl.value = String(section().bars);
+  const bars = String(section().bars);
+  if (!freeLength && ![...barsEl.options].some((o) => o.value === bars)) {
+    // a length set by an open-ended take: show it as a choice
+    const opt = new Option(`${bars} bars`, bars);
+    barsEl.insertBefore(opt, barsEl.querySelector('option[value="free"]'));
+  }
+  barsEl.value = freeLength ? 'free' : bars;
   gridEl.value = melody().grid;
   for (const b of document.querySelectorAll<HTMLButtonElement>('[data-mode]')) {
     b.setAttribute('aria-checked', String(b.dataset.mode === mode));
@@ -239,6 +251,13 @@ repeatButton($('slower'), () => setTempo(song.tempoBpm - 1));
 repeatButton($('faster'), () => setTempo(song.tempoBpm + 1));
 
 barsEl.addEventListener('change', () => {
+  if (barsEl.value === 'free') {
+    freeLength = true;
+    save();
+    say('Recording runs until you tap stop. The song gets as many bars as you whistled.');
+    return;
+  }
+  freeLength = false;
   commit(() => {
     section().bars = Number(barsEl.value);
     const len = lengthTicks();
@@ -404,6 +423,8 @@ async function record(): Promise<void> {
     session = await engine.record({
       song,
       mode,
+      free: freeLength,
+      maxBars: MAX_FREE_BARS,
       onFrame: (f) => {
         if (!session) return;
         const offset = engine.estimateInputOffset();
@@ -417,6 +438,7 @@ async function record(): Promise<void> {
           if (label !== lastLabel) say((lastLabel = label), true);
           return;
         }
+        if (freeLength) recordingTicks = Math.max(lengthTicks(), (Math.floor(tick / barTicks()) + 1) * barTicks());
         roll.playhead = tick;
         roll.follow(tick);
         if (isVoiced(f, mode, floorGuess)) {
@@ -458,8 +480,16 @@ async function record(): Promise<void> {
   roll.playhead = null;
   roll.trace = [];
 
+  recordingTicks = null;
   const { notes, tuningOffset } = transcribe(result.frames, mode, result.noiseFloorDb);
   const take = rawToTake(notes, result);
+  // Open-ended take: as many bars as the last note reaches (a note spilling a
+  // little over a barline does not add a bar).
+  let freeBars: number | null = null;
+  if (freeLength && take.length) {
+    const lastBeat = Math.max(...take.map((t) => t.raw.startBeat + t.raw.durBeat));
+    freeBars = Math.min(MAX_FREE_BARS, Math.max(1, Math.ceil(lastBeat / beatsPerBar - 0.15)));
+  }
   const recordedGrid = melody().grid;
   const rememberTake = (detected: TakeNoteRef[]) => {
     if (!debug || !engine.hasTakeAudio) return;
@@ -481,14 +511,26 @@ async function record(): Promise<void> {
     };
     syncDebug();
   };
-  if (!take.length) {
-    rememberTake([]);
+  // Stopped during the count-in: a cancel, the song stays as it was.
+  if (result.stoppedAt < result.tBarOne + 0.2) {
+    forgetTake();
     roll.draw();
-    say(mode === 'whistle' ? 'No notes heard. Whistle a little louder or closer to the phone.' : 'No notes heard. Hum a little louder or closer to the phone.');
+    say('Recording cancelled.');
     return;
   }
+  const noNotes = () => {
+    rememberTake([]);
+    roll.draw();
+    say(mode === 'whistle' ? 'No notes heard. Whistle a little louder or closer to the phone. Your song is unchanged.' : 'No notes heard. Hum a little louder or closer to the phone. Your song is unchanged.');
+  };
+  if (!take.length) return noNotes();
+  // Quantize first: a take whose notes all fall outside the section must not
+  // replace the song with nothing.
+  const bars = freeBars ?? section().bars;
+  const q = quantizeTake(take, melody().grid, sectionTicks(song, { ...section(), bars }));
+  if (!q.notes.length) return noNotes();
   commit(() => {
-    const q = quantizeTake(take, melody().grid, lengthTicks());
+    section().bars = bars;
     lastGrid = q.grid;
     melody().notes = q.notes;
   });
@@ -498,7 +540,8 @@ async function record(): Promise<void> {
   const cents = Math.round(tuningOffset * 100);
   const tuning = Math.abs(cents) < 8 ? 'in tune' : `${Math.abs(cents)} cents ${cents > 0 ? 'sharp' : 'flat'}`;
   const gridName = lastGrid ? GRID_LABELS[lastGrid] : '';
-  say(`${n} note${n === 1 ? '' : 's'} on a ${gridName} grid, ${tuning}. Tap Play to hear it.`);
+  const barsText = freeBars ? ` in ${freeBars} bar${freeBars === 1 ? '' : 's'}` : '';
+  say(`${n} note${n === 1 ? '' : 's'}${barsText} on a ${gridName} grid, ${tuning}. Tap Play to hear it.`);
 }
 
 // --- export --------------------------------------------------------------
@@ -636,6 +679,13 @@ window.addEventListener('keydown', (e) => {
     roll.select(null);
   }
 });
+
+// iOS Safari ignores user-scalable=no: block its pinch gesture so the page
+// never zooms. The piano roll has its own zoom buttons and ctrl+wheel.
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('touchmove', (e) => {
+  if (e.touches.length > 1) e.preventDefault();
+}, { passive: false });
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && !sharing) forgetTake();
