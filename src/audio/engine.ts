@@ -65,6 +65,9 @@ export class Engine {
   /** Must be called from a user gesture the first time (iOS). */
   async ensure(): Promise<AudioContext> {
     if (!this.ctx) {
+      // iOS: speaker output (not the earpiece), and audible with the silent switch on.
+      const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+      if (session) session.type = 'playback';
       this.ctx = new AudioContext({ latencyHint: 'interactive' });
       this.master = this.ctx.createGain();
       this.master.gain.value = 0.8;
@@ -205,12 +208,15 @@ export class Engine {
     }
     await this.workletReady;
 
-    // iOS: the audio session must allow capture *before* the mic is opened,
-    // otherwise getUserMedia fails ("AudioSession category is not compatible
-    // with audio capture"). Afterwards it goes back to 'auto', never 'playback',
-    // so the next recording can open the mic again.
+    // iOS audio session (WebKit bugs 282939, 295889):
+    // - getUserMedia fails under 'playback' ("AudioSession category is not
+    //   compatible with audio capture"), so reset to 'auto' before opening the mic;
+    // - after the mic opens, 'play-and-record' makes iOS settle the route;
+    // - when the take ends, 'playback' moves output off the earpiece, where
+    //   iOS otherwise leaves it after capture. It stays 'playback' until the
+    //   next recording (this also makes sound play with the silent switch on).
     const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
-    if (session) session.type = 'play-and-record';
+    if (session) session.type = 'auto';
 
     // Voice processing treats whistles as noise: switch all of it off.
     let stream: MediaStream;
@@ -219,9 +225,10 @@ export class Engine {
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       });
     } catch (err) {
-      if (session) session.type = 'auto';
+      if (session) session.type = 'playback';
       throw err;
     }
+    if (session) session.type = 'play-and-record';
 
     const src = ctx.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(ctx, 'siffle-capture', {
@@ -280,7 +287,7 @@ export class Engine {
       node.disconnect();
       sink.disconnect();
       stream.getTracks().forEach((t) => t.stop());
-      if (session) session.type = 'auto';
+      if (session) session.type = 'playback';
       const c = ctx as AudioContext & { outputLatency?: number };
       resolve({
         frames,
