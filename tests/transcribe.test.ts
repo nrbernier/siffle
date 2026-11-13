@@ -78,6 +78,46 @@ describe('transcribe', () => {
     expect(notes.map((n) => n.pitch)).toEqual(SCALE.map((m) => m - 24));
   });
 
+  // Real iPhone takes (no automatic gain) put whistles only a few dB above room
+  // noise, and the pitch tracker's clarity dips in and out within a note.
+  it('a quiet scale only 8 dB above the noise floor is still found', () => {
+    const amp = Math.pow(10, (-54 + 8) / 20) * Math.SQRT2; // sine RMS 8 dB over the noise
+    const tones = sequence(SCALE, 0.3, { gapSec: 0.06 }).map((t) => ({ ...t, amp }));
+    const sig = render(tones, 2.9, { noiseDb: -54 });
+    const { notes } = transcribe(analyzeSignal(sig, SR, 'whistle'), 'whistle', -54);
+    expect(notes.map((n) => n.pitch)).toEqual(SCALE.map((m) => m - 24));
+  });
+
+  it('a note whose clarity drops out for 50 ms stays one note', () => {
+    // As in real takes: the whistle goes breathy for a moment, the level barely changes.
+    const sig = render([{ midi: 88, start: 0.2, dur: 0.8, amp: 0.05 }], 1.2, { noiseDb: -50 });
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296) * 2 - 1;
+    for (let i = Math.round(0.55 * SR); i < Math.round(0.6 * SR); i++) sig[i] = 0.06 * rnd();
+    const { notes } = run(sig);
+    expect(notes.map((n) => n.pitch)).toEqual([64]);
+  });
+
+  it('a real silence between two equal notes still separates them', () => {
+    const { notes } = run(render(sequence([88, 88], 0.35, { gapSec: 0.05 }), 1.0, { noiseDb: -50 }));
+    expect(notes).toHaveLength(2);
+  });
+
+  it('a short scoop into a long note is part of that note', () => {
+    const tones = [
+      { midi: 86.5, toMidi: 88, start: 0.2, dur: 0.1 },
+      { midi: 88, start: 0.3, dur: 0.6 },
+    ];
+    const { notes } = run(render(tones, 1.2));
+    expect(notes.map((n) => n.pitch)).toEqual([64]);
+    expect(notes[0].startSec).toBeCloseTo(0.2, 1);
+  });
+
+  it('fast equal sixteenths are not mistaken for scoops', () => {
+    const { notes } = run(render(sequence([84, 86, 88, 89, 91, 89, 88, 86], 0.125), 1.4));
+    expect(notes.map((n) => n.pitch)).toEqual([60, 62, 64, 65, 67, 65, 64, 62]);
+  });
+
   it('voice mode: hummed notes with harmonics', () => {
     const tones = sequence([48, 50, 52, 53], 0.3, { gapSec: 0.05 }).map((t) => ({ ...t, harmonics: [0.5, 0.3, 0.2] }));
     const { notes } = run(render(tones, 1.6), 'voice');

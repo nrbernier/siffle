@@ -33,6 +33,15 @@ describe('quantizeTake', () => {
     expect(chooseGrid(starts.map((b) => b * 480))).toBe('et');
   });
 
+  it('eighths played late with real-player scatter stay on the eighth grid', () => {
+    // a whistler about 0.13 beat behind, scattered by up to ±0.1 beat
+    const scatter = [0.09, -0.01, -0.05, 0.05, -0.08, 0.01, 0.05, -0.1];
+    const starts = [1, 2, 3, 4, 5, 6, 7, 8].map((b, i) => b + 0.13 + scatter[i]);
+    const r = quantizeTake(take(starts, 0.6), 'auto', 5760);
+    expect(r.grid).toBe('e');
+    expect(r.notes.map((n) => n.startTick)).toEqual([480, 960, 1440, 1920, 2400, 2880, 3360, 3840]);
+  });
+
   it('a note just before the downbeat lands on tick 0', () => {
     const r = quantizeTake(take([-0.1, 1, 2], 0.9), 'e', 1920);
     expect(r.notes[0].startTick).toBe(0);

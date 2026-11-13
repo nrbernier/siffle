@@ -61,7 +61,14 @@ export function chooseGrid(startTicks: number[]): ConcreteGrid {
   }).length;
   const s = fit('s', 30);
   if (et.share >= 0.85 && tripletOnsets >= 2 && et.share > s.share) return 'et';
-  return 's';
+  // Sixteenths only when several onsets really sit on an off-beat sixteenth.
+  // Real players scatter by a tenth of a beat or more around eighths; that
+  // scatter alone must not switch the grid (it puts whole takes a sixteenth off).
+  const offSixteenths = e.shifted.filter((t) => {
+    const r = Math.abs(t - Math.round(t / GRID_TICKS.e) * GRID_TICKS.e);
+    return Math.abs(r - GRID_TICKS.s) < GRID_TICKS.s * 0.35;
+  }).length;
+  return offSixteenths >= 2 && offSixteenths >= startTicks.length * 0.1 ? 's' : 'e';
 }
 
 export interface QuantizeResult {

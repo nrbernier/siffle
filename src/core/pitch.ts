@@ -55,6 +55,9 @@ export function yin(
   if (tau < 0) {
     let best = minLag;
     for (let t = minLag + 1; t <= maxLag; t++) if (c[t] < c[best]) best = t;
+    // A minimum at the edge of the search range is not a pitch: it is what
+    // noise reports (e.g. a steady fake 400 Hz at the bottom of the whistle range).
+    if (best <= minLag + 1 || best >= maxLag - 1) return { f0: 0, clarity: 0 };
     tau = best;
   }
 
