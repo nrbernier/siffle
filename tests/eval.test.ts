@@ -18,6 +18,16 @@ describe('wav', () => {
   });
 });
 
+describe('click latency', () => {
+  it('rejects a count-in where someone whistles over the clicks', () => {
+    const t = syntheticTake(FRERE_JACQUES, { latencySec: 0.15 });
+    // a long whistle right through the count-in
+    const start = Math.round((t.file.t0 - t.file.firstSample / t.sampleRate) * t.sampleRate);
+    for (let i = start; i < start + Math.round(2.4 * t.sampleRate); i++) t.samples[i] += 0.2 * Math.sin((2 * Math.PI * 1500 * i) / t.sampleRate);
+    expect(roundTrip(t).measuredLatencyMs).toBeNull();
+  });
+});
+
 describe('eval harness', () => {
   it('a perfect synthetic speaker take scores 100% with no shift', () => {
     const s = roundTrip(syntheticTake(FRERE_JACQUES));

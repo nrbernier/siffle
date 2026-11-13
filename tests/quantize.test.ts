@@ -63,6 +63,13 @@ describe('quantizeTake', () => {
     expect(r.notes[3].durTick).toBe(240);
   });
 
+  it('a short stray sound before bar one is not a pickup', () => {
+    const t = take([-0.6, 0, 1, 2], 0.4);
+    t[0] = { ...t[0], raw: { ...t[0].raw, durBeat: 0.15 } };
+    const r = quantizeTake(t, 'e', 1920);
+    expect(r.notes.map((n) => n.startTick)).toEqual([0, 480, 960]);
+  });
+
   it('a note more than one beat before bar one is still dropped', () => {
     const r = quantizeTake(take([-1.5, 0, 1], 0.4), 'e', 1920);
     expect(r.notes.map((n) => n.startTick)).toEqual([0, 480]);

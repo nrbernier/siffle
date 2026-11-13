@@ -27,6 +27,26 @@ let mode: InputMode = (loadPrefs().mode as InputMode) in MODES ? (loadPrefs().mo
 let lastGrid: ConcreteGrid | null = null;
 const undoStack: string[] = [];
 const engine = new Engine();
+const LATENCY_KEY = 'siffle:latency';
+
+// Timing calibration: the delay heard in the last count-in whose clicks were
+// clear. Used for takes where the clicks cannot be heard (headphones, noise).
+function loadLatency(): number | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(LATENCY_KEY) ?? 'null');
+    return typeof v?.sec === 'number' && v.sec >= 0 && v.sec < 1 ? v.sec : null;
+  } catch {
+    return null;
+  }
+}
+function saveLatency(sec: number): void {
+  try {
+    localStorage.setItem(LATENCY_KEY, JSON.stringify({ sec, at: new Date().toISOString() }));
+  } catch {
+    /* ignore */
+  }
+}
+engine.calibratedOffsetSec = loadLatency();
 let playback: ReturnType<Engine['play']> | null = null;
 let session: RecordSession | null = null;
 let playRaf = 0;
@@ -427,7 +447,7 @@ async function record(): Promise<void> {
       maxBars: MAX_FREE_BARS,
       onFrame: (f) => {
         if (!session) return;
-        const offset = engine.estimateInputOffset();
+        const offset = session.inputOffset();
         const tick = ((f.t - offset - session.tBarOne) / beat) * PPQ;
         if (tick < 0) {
           // count-in: learn the room's noise level and count down
@@ -481,6 +501,16 @@ async function record(): Promise<void> {
   roll.trace = [];
 
   recordingTicks = null;
+  // Remember a newly measured delay; mention it when it is new or has moved.
+  let calibrationNote = '';
+  if (result.measuredLatencySec !== null) {
+    const prev = engine.calibratedOffsetSec;
+    engine.calibratedOffsetSec = result.measuredLatencySec;
+    saveLatency(result.measuredLatencySec);
+    if (prev === null || Math.abs(prev - result.measuredLatencySec) > 0.02) {
+      calibrationNote = ` Timing calibrated from the clicks (${Math.round(result.measuredLatencySec * 1000)} ms delay).`;
+    }
+  }
   const { notes, tuningOffset } = transcribe(result.frames, mode, result.noiseFloorDb);
   const take = rawToTake(notes, result);
   // Open-ended take: as many bars as the last note reaches (a note spilling a
@@ -505,6 +535,7 @@ async function record(): Promise<void> {
       t0: result.t0,
       tBarOne: result.tBarOne,
       inputOffsetSec: result.inputOffsetSec,
+      measuredLatencySec: result.measuredLatencySec,
       outputLatency: result.outputLatency,
       baseLatency: result.baseLatency,
       detected,
@@ -539,9 +570,10 @@ async function record(): Promise<void> {
   roll.centerOn(melody().notes.map((x) => x.pitch));
   const cents = Math.round(tuningOffset * 100);
   const tuning = Math.abs(cents) < 8 ? 'in tune' : `${Math.abs(cents)} cents ${cents > 0 ? 'sharp' : 'flat'}`;
+  const timing = calibrationNote;
   const gridName = lastGrid ? GRID_LABELS[lastGrid] : '';
   const barsText = freeBars ? ` in ${freeBars} bar${freeBars === 1 ? '' : 's'}` : '';
-  say(`${n} note${n === 1 ? '' : 's'}${barsText} on a ${gridName} grid, ${tuning}. Tap Play to hear it.`);
+  say(`${n} note${n === 1 ? '' : 's'}${barsText} on a ${gridName} grid, ${tuning}.${timing} Tap Play to hear it.`);
 }
 
 // --- export --------------------------------------------------------------

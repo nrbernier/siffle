@@ -23,7 +23,8 @@ export interface TakeFile {
   firstSample: number; // context sample index of WAV sample 0
   t0: number; // context seconds of the first count-in click
   tBarOne: number; // context seconds of the first downbeat
-  inputOffsetSec: number; // the latency estimate the app used
+  inputOffsetSec: number; // the latency offset the app used for this take
+  measuredLatencySec?: number | null; // heard in the count-in (absent in takes saved before calibration)
   outputLatency: number | null;
   baseLatency: number | null;
   headphones: boolean;

@@ -1,6 +1,8 @@
 // Beats → ticks (plan section 5). Pure.
 
-import { PPQ } from './config';
+import { PPQ, SEGMENT } from './config';
+
+const SEGMENT_MIN_PICKUP = SEGMENT.minPickupBeats * PPQ;
 import type { Grid, Note, RawTiming } from './model';
 import { median, newId } from './util';
 
@@ -103,7 +105,8 @@ export function quantizeTake(take: TakeNote[], grid: Grid, lengthTicks: number):
   for (const i of items) {
     let slot = Math.round(i.start / g) * g + 0; // + 0 turns -0 into 0
     if (slot < 0 && i.start > -g / 2) slot = 0;
-    if (slot < 0 && slot >= -PPQ) {
+    // a pickup must be a real note, not a stray sound during the count-in
+    if (slot < 0 && slot >= -PPQ && i.end - i.start >= SEGMENT_MIN_PICKUP) {
       slot += lengthTicks;
       i.start += lengthTicks;
       i.end += lengthTicks;

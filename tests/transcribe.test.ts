@@ -98,6 +98,14 @@ describe('transcribe', () => {
     expect(notes.map((n) => n.pitch)).toEqual([64]);
   });
 
+  it('a held note that wobbles 8 dB in loudness stays one note', () => {
+    // real held whistles swell and fade by up to ~10 dB without a new attack
+    const sig = render([{ midi: 93, start: 0.2, dur: 1.2, amp: 0.1 }], 1.6, { noiseDb: -70 });
+    for (let i = 0; i < sig.length; i++) sig[i] *= 1 - 0.6 * Math.max(0, Math.sin(2 * Math.PI * 3 * (i / SR))) ** 4;
+    const { notes } = run(sig);
+    expect(notes.map((n) => n.pitch)).toEqual([69]);
+  });
+
   it('a real silence between two equal notes still separates them', () => {
     const { notes } = run(render(sequence([88, 88], 0.35, { gapSec: 0.05 }), 1.0, { noiseDb: -50 }));
     expect(notes).toHaveLength(2);

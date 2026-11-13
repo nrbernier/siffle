@@ -2,6 +2,7 @@
 // Runs exactly the app's pipeline: analyse → transcribe → rawToTake → quantize.
 
 import { PPQ } from '../../src/core/config';
+import { clickLatency, countInClicks, EnergyBlocks } from '../../src/core/latency';
 import { analyzeSignal, noiseFloorDb } from '../../src/core/pitch';
 import { GRID_TICKS, quantizeTake, type ConcreteGrid } from '../../src/core/quantize';
 import { rawToTake } from '../../src/core/take';
@@ -30,12 +31,12 @@ export function lengthTicks(f: TakeFile): number {
 }
 
 /** Run the app's pipeline on a take. */
-export function detect(f: TakeFile, samples: Float32Array, sampleRate: number) {
+export function detect(f: TakeFile, samples: Float32Array, sampleRate: number, inputOffsetSec = f.inputOffsetSec) {
   if (sampleRate !== f.sampleRate) throw new Error(`${f.name}: WAV is ${sampleRate} Hz, JSON says ${f.sampleRate} Hz`);
   const frames = analyzeSignal(samples, sampleRate, f.mode, f.firstSample);
   const floor = noiseFloorDb(frames, f.t0, f.tBarOne);
   const { notes } = transcribe(frames, f.mode, floor);
-  const take = rawToTake(notes, { tBarOne: f.tBarOne, inputOffsetSec: f.inputOffsetSec, bpm: f.bpm });
+  const take = rawToTake(notes, { tBarOne: f.tBarOne, inputOffsetSec, bpm: f.bpm });
   const q = quantizeTake(take, f.grid, lengthTicks(f));
   return { notes: q.notes.map(({ startTick, durTick, pitch }) => ({ startTick, durTick, pitch })), grid: q.grid };
 }
@@ -61,40 +62,21 @@ function match(expected: TakeNoteRef[], detected: TakeNoteRef[], shift: number, 
 }
 
 /**
- * Round-trip delay heard in the recording: for each count-in click, the time
- * from its scheduled start to the moment it appears in the mic signal.
- * Only meaningful on speaker takes (with headphones the mic does not hear it).
+ * Round-trip delay heard in the recording, measured exactly as the live app
+ * does (src/core/latency.ts). Null when the clicks are not clearly heard.
  */
 export function measureLatency(f: TakeFile, samples: Float32Array, sampleRate: number): number | null {
-  const beat = 60 / f.bpm;
-  const block = Math.round(sampleRate / 1000); // 1 ms energy blocks
-  const delays: number[] = [];
-  for (let k = 0; k < f.timeSig[0]; k++) {
-    const tc = f.t0 + k * beat;
-    const from = Math.round(tc * sampleRate) - f.firstSample;
-    const to = from + Math.round(0.4 * sampleRate);
-    if (from < 0 || to > samples.length) continue;
-    const energy: number[] = [];
-    for (let s = from; s + block <= to; s += block) {
-      let e = 0;
-      for (let j = s; j < s + block; j++) e += samples[j] * samples[j];
-      energy.push(e / block);
-    }
-    const sorted = [...energy].sort((a, b) => a - b);
-    const floor = sorted[Math.floor(sorted.length * 0.2)];
-    const peak = sorted[sorted.length - 1];
-    if (peak < 1e-7 || peak < floor * 20) continue; // click not heard
-    const onset = energy.findIndex((e) => e > floor + 0.2 * (peak - floor));
-    if (onset < 3) continue; // already loud when the click started (e.g. whistling during the count-in)
-    delays.push(onset / 1000);
-  }
-  if (delays.length < 2) return null;
-  delays.sort((a, b) => a - b);
-  return delays[delays.length >> 1];
+  const clicks = countInClicks(f.t0, f.bpm, f.timeSig[0]);
+  const blocks = new EnergyBlocks(f.t0 - 0.2, clicks[clicks.length - 1] + 0.6, sampleRate);
+  blocks.push(samples, f.firstSample);
+  return clickLatency(blocks.means(), blocks.startTime, clicks);
 }
 
 export function scoreTake(f: TakeFile, samples: Float32Array, sampleRate: number): Score {
-  const { notes, grid } = detect(f, samples, sampleRate);
+  // Same choice as the live app: the latency heard in the count-in when the
+  // clicks are clear, otherwise the offset the app had at the time.
+  const measured = measureLatency(f, samples, sampleRate);
+  const { notes, grid } = detect(f, samples, sampleRate, measured ?? f.inputOffsetSec);
   const len = lengthTicks(f);
   const g = GRID_TICKS[grid];
   const atZero = match(f.expected, notes, 0, len);
@@ -127,7 +109,7 @@ export function scoreTake(f: TakeFile, samples: Float32Array, sampleRate: number
     slotShift,
     grid,
     estLatencyMs: Math.round(f.inputOffsetSec * 1000),
-    measuredLatencyMs: f.headphones ? null : ((m) => (m === null ? null : Math.round(m * 1000)))(measureLatency(f, samples, sampleRate)),
+    measuredLatencyMs: measured === null ? null : Math.round(measured * 1000),
     notes,
   };
 }

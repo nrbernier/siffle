@@ -49,6 +49,11 @@ export function voicedFrames(frames: Frame[], mode: InputMode, noiseFloorDb: num
   });
 }
 
+/** Level a frame must fall under, inside a note at `noteLvl`, to count as a re-articulation. */
+export function dipThreshold(noteLvl: number, noiseFloorDb: number): number {
+  return Math.min(noteLvl - SEGMENT.dipDb, Math.max(noteLvl - SEGMENT.dipDeepDb, noiseFloorDb + SEGMENT.dipFloorMarginDb));
+}
+
 export function transcribe(frames: Frame[], mode: InputMode, noiseFloorDb: number): TranscribeResult {
   const cfg = MODES[mode];
   const n = frames.length;
@@ -130,7 +135,7 @@ export function transcribe(frames: Frame[], mode: InputMode, noiseFloorDb: numbe
     }
 
     const lvl = level(cur);
-    const quiet = frames[i].rmsDb < lvl - SEGMENT.dipDb;
+    const quiet = frames[i].rmsDb < dipThreshold(lvl, noiseFloorDb);
     if (!voiced[i] || quiet) {
       dev = []; // a deviation running into a gap is a release, not a new note
       gap.push(i);
@@ -203,7 +208,7 @@ export function transcribe(frames: Frame[], mode: InputMode, noiseFloorDb: numbe
     if (gapFrames <= 0) return true;
     const gapLvl = median(frames.slice(a[a.length - 1] + 1, b[0]).map((f) => f.rmsDb));
     const noteLvl = Math.min(median(a.slice(-10).map((j) => frames[j].rmsDb)), median(b.slice(0, 10).map((j) => frames[j].rmsDb)));
-    return noteLvl - gapLvl < SEGMENT.dipDb;
+    return gapLvl >= dipThreshold(noteLvl, noiseFloorDb);
   };
   const sorted = groups.map((g) => [...g].sort((a, b) => a - b)).filter((g) => g.length);
   const joined: number[][] = [];

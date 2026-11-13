@@ -58,8 +58,15 @@ export const SEGMENT = {
   stableSemis: 0.5, // agreement tolerance
   startFrames: 3, // voiced frames needed to open a note
   endFrames: 5, // unvoiced frames that close a note
-  dipDb: 6, // level drop that counts as a re-articulation
-  minNoteFrames: 6, // shorter notes are merged into a neighbour or dropped
+  // Re-articulation: a deliberate new attack on the same pitch drops deep,
+  // to the room noise (16-28 dB in real takes). A held whistle wobbles by up
+  // to ~10 dB without meaning a new note. A dip counts if it is dipDeepDb
+  // deep or reaches the noise floor, and never if it is under dipDb.
+  dipDb: 6,
+  dipDeepDb: 14,
+  dipFloorMarginDb: 3,
+  minNoteFrames: 9, // notes shorter than this (90 ms) are merged into a neighbour or dropped
+  minPickupBeats: 0.25, // a note before bar one shorter than this is a stray sound, not a pickup
   mergeGapSec: 0.04,
   bridgeFrames: 8, // fragments closer than this (and without a real dip in level) may be rejoined
   sameNoteSemis: 0.5, // fragments this close in pitch are the same note

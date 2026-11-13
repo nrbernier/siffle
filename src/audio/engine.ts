@@ -3,6 +3,7 @@
 import { PPQ, type InputMode } from '../core/config';
 import type { Song } from '../core/model';
 import { sectionTicks } from '../core/model';
+import { clickLatency, countInClicks, EnergyBlocks } from '../core/latency';
 import { noiseFloorDb, StreamingAnalyzer, type Frame } from '../core/pitch';
 import { midiToHz } from '../core/util';
 
@@ -12,7 +13,8 @@ export interface RecordResult {
   tBarOne: number;
   stoppedAt: number; // context time when the recording ended
   noiseFloorDb: number;
-  inputOffsetSec: number;
+  inputOffsetSec: number; // the offset used for this take: measured if possible, else the best previous value
+  measuredLatencySec: number | null; // heard in this take's count-in, null if the clicks were not clear
   bpm: number;
   sampleRate: number;
   outputLatency: number | null;
@@ -32,6 +34,8 @@ export interface RecordSession {
   t0: number;
   tBarOne: number;
   tEnd: number; // in free-length mode this is the safety cap
+  /** Offset to line the mic up with the beat; switches to the measured value once the count-in is over. */
+  inputOffset(): number;
 }
 
 export class Engine {
@@ -87,9 +91,15 @@ export class Engine {
     return (c?.outputLatency ?? 0) + (c?.baseLatency ?? 0);
   }
 
-  /** Round-trip estimate: hear the click, react, the mic hears you later. */
+  /**
+   * Round-trip delay from a scheduled click to the mic hearing the player.
+   * Set from the last take whose count-in clicks were heard (see core/latency);
+   * until then the browser's own figure, which is far too low on iOS.
+   */
+  calibratedOffsetSec: number | null = null;
+
   estimateInputOffset(): number {
-    return this.outputLatency + 0.015;
+    return this.calibratedOffsetSec ?? this.outputLatency + 0.015;
   }
 
   click(t: number, accent: boolean, dest: AudioNode = this.master): void {
@@ -245,12 +255,6 @@ export class Engine {
       frames.push(f);
       opts.onFrame(f);
     });
-    const keep = this.debug;
-    node.port.onmessage = (e: MessageEvent<{ start: number; data: Float32Array }>) => {
-      analyzer.push(e.data.data, e.data.start);
-      if (keep) this.takeChunks.push({ start: e.data.start, data: e.data.data });
-    };
-
     const song = opts.song;
     const section = song.sections[0];
     const beat = 60 / song.tempoBpm;
@@ -259,7 +263,26 @@ export class Engine {
     const tBarOne = t0 + beatsPerBar * beat;
     const bars = opts.free ? (opts.maxBars ?? 64) : sectionTicks(song, section) / PPQ / beatsPerBar;
     const tEnd = tBarOne + bars * beatsPerBar * beat;
-    const inputOffsetSec = this.estimateInputOffset();
+
+    // Latency: listen for the count-in clicks (1 ms energy levels only).
+    const clicks = countInClicks(t0, song.tempoBpm, beatsPerBar);
+    const blocks = new EnergyBlocks(t0 - 0.2, clicks[clicks.length - 1] + 0.6, ctx.sampleRate);
+    const estimate = this.estimateInputOffset();
+    let measured: number | null = null;
+    let measuredDone = false;
+    const measure = () => {
+      if (measuredDone) return;
+      measuredDone = true;
+      measured = clickLatency(blocks.means(), blocks.startTime, clicks);
+    };
+    const inputOffset = () => measured ?? estimate;
+
+    const keep = this.debug;
+    node.port.onmessage = (e: MessageEvent<{ start: number; data: Float32Array }>) => {
+      analyzer.push(e.data.data, e.data.start);
+      blocks.push(e.data.data, e.data.start);
+      if (keep) this.takeChunks.push({ start: e.data.start, data: e.data.data });
+    };
 
     // Clicks are scheduled just ahead of time, so an open-ended take does not
     // queue hundreds of them and stopping silences them at once.
@@ -288,6 +311,7 @@ export class Engine {
       sink.disconnect();
       stream.getTracks().forEach((t) => t.stop());
       if (session) session.type = 'playback';
+      if (ctx.currentTime > clicks[clicks.length - 1] + 0.6) measure();
       const c = ctx as AudioContext & { outputLatency?: number };
       resolve({
         frames,
@@ -295,7 +319,8 @@ export class Engine {
         t0,
         tBarOne,
         noiseFloorDb: noiseFloorDb(frames, t0, tBarOne),
-        inputOffsetSec,
+        inputOffsetSec: inputOffset(),
+        measuredLatencySec: measured,
         bpm: song.tempoBpm,
         sampleRate: ctx.sampleRate,
         outputLatency: c.outputLatency ?? null,
@@ -305,9 +330,10 @@ export class Engine {
     // a short tail lets the last note's release be analysed
     const watch = window.setInterval(() => {
       scheduleClicks();
-      if (ctx.currentTime >= tEnd + inputOffsetSec + 0.2) finish();
+      if (ctx.currentTime > clicks[clicks.length - 1] + 0.7) measure();
+      if (ctx.currentTime >= tEnd + inputOffset() + 0.2) finish();
     }, 50);
 
-    return { stop: finish, done, t0, tBarOne, tEnd };
+    return { stop: finish, done, t0, tBarOne, tEnd, inputOffset };
   }
 }
